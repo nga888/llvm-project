@@ -3259,8 +3259,8 @@ template <class ELFT> static void linkDynamicDebug(Ctx &ctx) {
 
   for (auto *file : ctx.objectFiles) {
     auto *obj = cast<ObjFile<ELFT>>(file);
-    if (obj->dynDbgSec) {
-      auto content = obj->dynDbgSec->content();
+    if (obj->dynDbgInfo) {
+      auto content = obj->dynDbgInfo->inputSec->content();
       MemoryBufferRef mb({(const char *)content.data(), content.size()},
                          obj->mb.getBufferIdentifier());
       dc.driver.addFile(createObjFile(dc, mb));
@@ -3275,6 +3275,12 @@ template <class ELFT> static void linkDynamicDebug(Ctx &ctx) {
       dc.saver.save(Twine("-O") + Twine(ctx.arg.optimize)).data()};
   if (ctx.arg.resolveGroups)
     args.push_back("--force-group-allocation");
+
+  if (ctx.arg.gcSections) {
+    dc.dynDbgGCRoots.swap(ctx.dynDbgGCRoots);
+    args.push_back("--gc-sections");
+  }
+
   dc.driver.linkerMain(args);
   if (errCount(dc) > 0 || !dc.dynDbgOutput) {
     Err(ctx) << "Failed to create relocatable dynamic debug object";

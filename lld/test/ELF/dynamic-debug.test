@@ -47,10 +47,40 @@ RUN: ld.lld -e main -o %t/out-dd %t/main.o %t/foo.o %t/shared.so
 RUN: llvm-readelf -Srsn %t/out-dd | FileCheck -DNSYM=21 --check-prefixes=DD,NO-GC %s
 
 ## Link simulated dynamic debugging objects using `--gc-sections`.
-## Note that `--gc-sections` is not yet supported for the "inner" unoptimized relocatable
-## link.
 RUN: ld.lld -e main --gc-sections -o %t/out-dd-gc %t/main.o %t/foo.o %t/shared.so
-RUN: llvm-readelf -Srsn %t/out-dd-gc | FileCheck -DNSYM=19 --check-prefixes=DD,GC %s
+RUN: llvm-readelf -Srsn %t/out-dd-gc | FileCheck -DNSYM=18 --check-prefixes=DD,GC %s
+
+## Link simulated dynamic debugging objects using `--gc-sections` and `--why-live`
+## (note that this uses a different code path).
+RUN: ld.lld -e main --gc-sections --why-live="*" -o %t/out-dd-gc-wl %t/main.o %t/foo.o %t/shared.so \
+RUN:   | FileCheck -DDIR="%t" --check-prefix=WL %s
+RUN: llvm-readelf -Srsn %t/out-dd-gc-wl | FileCheck -DNSYM=18 --check-prefixes=DD,GC %s
+
+WL:      live symbol: [[DIR]]/main.o:(comdat_func)
+WL-NEXT: >>> dynamic debugging: [[DIR]]/main.o:(.text.func)
+WL-NEXT: >>> contained live symbol: [[DIR]]/main.o:(func)
+WL-NEXT: >>> referenced by: [[DIR]]/main.o:(.text.main)
+WL-NEXT: >>> contained live symbol: [[DIR]]/main.o:(main) (entry point)
+WL:      live symbol: [[DIR]]/main.o:(inlined_in_opt)
+WL-NEXT: >>> dynamic debugging: [[DIR]]/main.o:(.text.func)
+WL-NEXT: >>> contained live symbol: [[DIR]]/main.o:(func)
+WL-NEXT: >>> referenced by: [[DIR]]/main.o:(.text.main)
+WL-NEXT: >>> contained live symbol: [[DIR]]/main.o:(main) (entry point)
+WL:      live symbol: [[DIR]]/main.o:(inlined_for_unopt_and_non_alloc)
+WL-NEXT: >>> dynamic debugging: [[DIR]]/main.o:(.text.func)
+WL-NEXT: >>> contained live symbol: [[DIR]]/main.o:(func)
+WL-NEXT: >>> referenced by: [[DIR]]/main.o:(.text.main)
+WL-NEXT: >>> contained live symbol: [[DIR]]/main.o:(main) (entry point)
+WL:      live symbol: [[DIR]]/shared.so:(shared_data_for_unopt)
+WL-NEXT: >>> dynamic debugging: [[DIR]]/main.o:(.text.func)
+WL-NEXT: >>> contained live symbol: [[DIR]]/main.o:(func)
+WL-NEXT: >>> referenced by: [[DIR]]/main.o:(.text.main)
+WL-NEXT: >>> contained live symbol: [[DIR]]/main.o:(main) (entry point)
+WL:      live symbol: [[DIR]]/shared.so:(shared_func_for_unopt)
+WL-NEXT: >>> dynamic debugging: [[DIR]]/foo.o:(.text.foo)
+WL-NEXT: >>> contained live symbol: [[DIR]]/foo.o:(foo)
+WL-NEXT: >>> referenced by: [[DIR]]/main.o:(.text.main)
+WL-NEXT: >>> contained live symbol: [[DIR]]/main.o:(main) (entry point)
 
 ## Check dynamic debugging related sections.
 DD: There are 20 section headers, starting at offset {{.*}}:
@@ -87,7 +117,7 @@ DD-DAG:    {{.*}} 0 FUNC    GLOBAL DEFAULT [[#]] main
 DD-DAG:    {{.*}} 0 FUNC    GLOBAL DEFAULT [[#]] foo
 DD-DAG:    {{.*}} 0 FUNC    GLOBAL DEFAULT [[#]] inlined_in_opt
 NO-GC-DAG: {{.*}} 0 FUNC    GLOBAL DEFAULT [[#]] unused_func
-DD-DAG:    {{.*}} 0 FUNC    GLOBAL DEFAULT [[#]] used_by_unused_func
+NO-GC-DAG: {{.*}} 0 FUNC    GLOBAL DEFAULT [[#]] used_by_unused_func
 DD-DAG:    {{.*}} 0 FUNC    GLOBAL DEFAULT [[#]] inlined_for_unopt_and_non_alloc
 DD-DAG:    {{.*}} 0 OBJECT  GLOBAL DEFAULT   UND shared_data_for_unopt
 DD-DAG:    {{.*}} 0 FUNC    GLOBAL DEFAULT   UND shared_func_for_unopt
@@ -101,15 +131,19 @@ DD-NEXT: description data: 00 00 00 00
 
 ## Extract and check "inner" ELF for the default link.
 RUN: llvm-objcopy --dump-section=.debug_llvm_dyndbg=%t/in-dd.o %t/out-dd /dev/null
-RUN: llvm-readelf -Ssg %t/in-dd.o | FileCheck --check-prefix=IN %s
+RUN: llvm-readelf -Ssg %t/in-dd.o | FileCheck --check-prefixes=IN,IN-NO-GC %s
 
 ## Extract and check "inner" ELF for the `--gc-sections` link.
 RUN: llvm-objcopy --dump-section=.debug_llvm_dyndbg=%t/in-dd-gc.o %t/out-dd-gc /dev/null
-RUN: llvm-readelf -Ssg %t/in-dd-gc.o | FileCheck --check-prefix=IN %s
+RUN: llvm-readelf -Ssg %t/in-dd-gc.o | FileCheck --check-prefixes=IN,IN-GC %s
+
+## Extract and check "inner" ELF for the `--gc-sections` and `--why-live` link.
+RUN: llvm-objcopy --dump-section=.debug_llvm_dyndbg=%t/in-dd-gc-wl.o %t/out-dd-gc-wl /dev/null
+RUN: llvm-readelf -Ssg %t/in-dd-gc-wl.o | FileCheck --check-prefixes=IN,IN-GC %s
 
 IN: There are 9 section headers, starting at offset {{.*}}:
 IN:      Name            Type     Address          Off    Size   ES Flg Lk    Inf   Al
-IN:      .text           PROGBITS 0000000000000000 {{.*}} {{.*}} 00  AX  0      0    4
+IN:      .text           PROGBITS 0000000000000000 {{.*}} {{.*}} 00  AX  0      0   [[#]]
 IN-NEXT: .rela.text      RELA     0000000000000000 {{.*}} {{.*}} 18   I [[#]] [[#]]  8
 IN-NEXT: .debug_xyz      PROGBITS 0000000000000000 {{.*}} {{.*}} 00      0      0    1
 IN-NEXT: .rela.debug_xyz RELA     0000000000000000 {{.*}} {{.*}} 18   I [[#]] [[#]]  8
@@ -118,32 +152,33 @@ IN-NEXT: .symtab         SYMTAB   0000000000000000 {{.*}} {{.*}} 18     [[#]] [[
 IN-NEXT: .shstrtab       STRTAB   0000000000000000 {{.*}} {{.*}} 00      0      0    1
 IN-NEXT: .strtab         STRTAB   0000000000000000 {{.*}} {{.*}} 00      0      0    1
 
-IN: Symbol table '.symtab' contains 26 entries:
-IN-DAG: {{.*}} 0 SECTION LOCAL  DEFAULT [[#]] .text
-IN-DAG: {{.*}} 0 SECTION LOCAL  DEFAULT [[#]] .debug_xyz
-IN-DAG: {{.*}} 0 FUNC    GLOBAL HIDDEN  [[#]] __dyndbg.static_func.dyndbg.main
-IN-DAG: {{.*}} 0 FUNC    WEAK   HIDDEN  [[#]] __dyndbg.comdat_func
-IN-DAG: {{.*}} 0 FUNC    GLOBAL HIDDEN  [[#]] __dyndbg.func
-IN-DAG: {{.*}} 0 NOTYPE  GLOBAL DEFAULT   UND static_func.dyndbg.main
-IN-DAG: {{.*}} 0 NOTYPE  GLOBAL DEFAULT   UND static_data.dyndbg.main
-IN-DAG: {{.*}} 0 NOTYPE  GLOBAL DEFAULT   UND inlined_in_opt
-IN-DAG: {{.*}} 0 NOTYPE  GLOBAL DEFAULT   UND comdat_func
-IN-DAG: {{.*}} 0 NOTYPE  GLOBAL DEFAULT   UND inlined_for_unopt_and_non_alloc
-IN-DAG: {{.*}} 0 NOTYPE  GLOBAL DEFAULT   UND shared_data_for_unopt
-IN-DAG: {{.*}} 0 FUNC    GLOBAL HIDDEN  [[#]] __dyndbg.main
-IN-DAG: {{.*}} 0 NOTYPE  GLOBAL DEFAULT   UND foo
-IN-DAG: {{.*}} 0 NOTYPE  GLOBAL DEFAULT   UND func
-IN-DAG: {{.*}} 0 FUNC    GLOBAL DEFAULT [[#]] __dyndbg.inlined_in_opt
-IN-DAG: {{.*}} 0 FUNC    GLOBAL HIDDEN  [[#]] __dyndbg.unused_func
-IN-DAG: {{.*}} 0 NOTYPE  GLOBAL DEFAULT   UND used_by_unused_func
-IN-DAG: {{.*}} 0 FUNC    GLOBAL HIDDEN  [[#]] __dyndbg.inlined_for_unopt_and_non_alloc
-IN-DAG: {{.*}} 0 FUNC    GLOBAL HIDDEN  [[#]] __dyndbg.static_func.dyndbg.foo
-IN-DAG: {{.*}} 0 FUNC    GLOBAL HIDDEN  [[#]] __dyndbg.foo
-IN-DAG: {{.*}} 0 NOTYPE  GLOBAL DEFAULT   UND static_func.dyndbg.foo
-IN-DAG: {{.*}} 0 NOTYPE  GLOBAL DEFAULT   UND static_data.dyndbg.foo
-IN-DAG: {{.*}} 0 NOTYPE  GLOBAL DEFAULT   UND shared_func_for_unopt
-IN-DAG: {{.*}} 0 FUNC    GLOBAL HIDDEN  [[#]] __dyndbg.used_by_unused_func
-IN-DAG: {{.*}} 0 NOTYPE  GLOBAL DEFAULT   UND undef_used_by_non_alloc
+IN-NO-GC: Symbol table '.symtab' contains 26 entries:
+IN-GC:    Symbol table '.symtab' contains 22 entries:
+IN-DAG:       {{.*}} 0 SECTION LOCAL  DEFAULT [[#]] .text
+IN-DAG:       {{.*}} 0 SECTION LOCAL  DEFAULT [[#]] .debug_xyz
+IN-DAG:       {{.*}} 0 FUNC    GLOBAL HIDDEN  [[#]] __dyndbg.static_func.dyndbg.main
+IN-DAG:       {{.*}} 0 FUNC    WEAK   HIDDEN  [[#]] __dyndbg.comdat_func
+IN-DAG:       {{.*}} 0 FUNC    GLOBAL HIDDEN  [[#]] __dyndbg.func
+IN-DAG:       {{.*}} 0 NOTYPE  GLOBAL DEFAULT   UND static_func.dyndbg.main
+IN-DAG:       {{.*}} 0 NOTYPE  GLOBAL DEFAULT   UND static_data.dyndbg.main
+IN-DAG:       {{.*}} 0 NOTYPE  GLOBAL DEFAULT   UND inlined_in_opt
+IN-DAG:       {{.*}} 0 NOTYPE  GLOBAL DEFAULT   UND comdat_func
+IN-DAG:       {{.*}} 0 NOTYPE  GLOBAL DEFAULT   UND inlined_for_unopt_and_non_alloc
+IN-DAG:       {{.*}} 0 NOTYPE  GLOBAL DEFAULT   UND shared_data_for_unopt
+IN-DAG:       {{.*}} 0 FUNC    GLOBAL HIDDEN  [[#]] __dyndbg.main
+IN-DAG:       {{.*}} 0 NOTYPE  GLOBAL DEFAULT   UND foo
+IN-DAG:       {{.*}} 0 NOTYPE  GLOBAL DEFAULT   UND func
+IN-DAG:       {{.*}} 0 FUNC    GLOBAL DEFAULT [[#]] __dyndbg.inlined_in_opt
+IN-NO-GC-DAG: {{.*}} 0 FUNC    GLOBAL HIDDEN  [[#]] __dyndbg.unused_func
+IN-NO-GC-DAG: {{.*}} 0 NOTYPE  GLOBAL DEFAULT   UND used_by_unused_func
+IN-DAG:       {{.*}} 0 FUNC    GLOBAL HIDDEN  [[#]] __dyndbg.inlined_for_unopt_and_non_alloc
+IN-DAG:       {{.*}} 0 FUNC    GLOBAL HIDDEN  [[#]] __dyndbg.static_func.dyndbg.foo
+IN-DAG:       {{.*}} 0 FUNC    GLOBAL HIDDEN  [[#]] __dyndbg.foo
+IN-DAG:       {{.*}} 0 NOTYPE  GLOBAL DEFAULT   UND static_func.dyndbg.foo
+IN-DAG:       {{.*}} 0 NOTYPE  GLOBAL DEFAULT   UND static_data.dyndbg.foo
+IN-DAG:       {{.*}} 0 NOTYPE  GLOBAL DEFAULT   UND shared_func_for_unopt
+IN-NO-GC-DAG: {{.*}} 0 FUNC    GLOBAL HIDDEN  [[#]] __dyndbg.used_by_unused_func
+IN-NO-GC-DAG: {{.*}} 0 NOTYPE  GLOBAL DEFAULT   UND undef_used_by_non_alloc
 ## Groups have been resolved.
 IN: There are no section groups in this file.
 
@@ -167,7 +202,7 @@ RUN: cmp %t/rel-dd.o %t/rel-unopt.o
 RUN: ld.lld -e main -o %t/out-rel-dd %t/rel.o %t/shared.so
 RUN: llvm-readelf -Srsn %t/out-rel-dd | FileCheck -DNSYM=24 --check-prefixes=DD,NO-GC,REL %s
 RUN: ld.lld -e main --gc-sections -o %t/out-rel-dd-gc %t/rel.o %t/shared.so
-RUN: llvm-readelf -Srsn %t/out-rel-dd-gc | FileCheck -DNSYM=22 --check-prefixes=DD,GC,REL %s
+RUN: llvm-readelf -Srsn %t/out-rel-dd-gc | FileCheck -DNSYM=21 --check-prefixes=DD,GC,REL %s
 
 ## Extract and check "inner" ELF for the above links.
 RUN: llvm-objcopy --dump-section=.debug_llvm_dyndbg=%t/in-rel-dd.o %t/out-rel-dd /dev/null

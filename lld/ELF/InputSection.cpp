@@ -1359,6 +1359,31 @@ void InputSection::replace(InputSection *other) {
   other->markDead();
 }
 
+const DynDbgGCInfo *InputSection::getDynDbgGCInfo() const {
+  if (file->kind() != InputFile::ObjKind)
+    return nullptr;
+
+  ELFFileBase *efb = cast<ELFFileBase>(file);
+  switch (efb->ekind) {
+  case ELF32LEKind:
+    cast<ObjFile<ELF32LE>>(efb)->createDynDbgGCInfo();
+    break;
+  case ELF32BEKind:
+    cast<ObjFile<ELF32BE>>(efb)->createDynDbgGCInfo();
+    break;
+  case ELF64LEKind:
+    cast<ObjFile<ELF64LE>>(efb)->createDynDbgGCInfo();
+    break;
+  case ELF64BEKind:
+    cast<ObjFile<ELF64BE>>(efb)->createDynDbgGCInfo();
+    break;
+  default:
+    llvm_unreachable("");
+  }
+
+  return dynDbgGCInfo;
+}
+
 template <class ELFT>
 EhInputSection::EhInputSection(ObjFile<ELFT> &f,
                                const typename ELFT::Shdr &header,

@@ -799,6 +799,11 @@ struct Ctx : CommonLinkerContext {
   // Pointer to the output of the embedded unoptimized dynamic debugging
   // relocatable link.
   std::unique_ptr<llvm::FileOutputBuffer> dynDbgOutput;
+  // GC roots for the dynamic debugging relocatable link.
+  std::mutex dynDbgGCRootsMutex;
+  SmallVector<llvm::StringRef, 0> dynDbgGCRoots;
+  // Mutex pool used by ObjFile::createDynDbgGCInfo().
+  std::vector<std::mutex> dynDbgGCMutexPool;
 };
 
 // The first two elements of versionDefinitions represent VER_NDX_LOCAL and

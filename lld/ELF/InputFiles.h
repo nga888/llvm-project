@@ -240,6 +240,21 @@ public:
   std::optional<AArch64PauthAbiCoreInfo> aarch64PauthAbiCoreInfo;
 };
 
+// Dynamic debugging info.
+struct DynDbgGCInfo;
+
+struct DynDbgInfo {
+  // Embedded unoptimized dynamic debug input section.
+  std::unique_ptr<InputSection> inputSec;
+
+  // The following are used for `--gc-sections` support.
+  std::atomic<bool> gcInfoCreated = false;
+  std::unique_ptr<ELFFileBase> elf;
+  SmallVector<std::unique_ptr<DynDbgGCInfo>, 0> gcInfos;
+
+  DynDbgInfo(InputSection *is);
+};
+
 // .o file.
 template <class ELFT> class ObjFile : public ELFFileBase {
   LLVM_ELF_IMPORT_TYPES_ELFT(ELFT)
@@ -268,8 +283,13 @@ public:
   // Pointer to this input file's .llvm_addrsig section, if it has one.
   const Elf_Shdr *addrsigSec = nullptr;
 
-  // Embedded unoptimized dynamic debug input section.
-  std::unique_ptr<InputSection> dynDbgSec;
+  // Dynamic debugging info.
+  std::unique_ptr<DynDbgInfo> dynDbgInfo;
+
+  void visitGlobalRelocSymbolIndices(const Elf_Shdr &shdr,
+                                     uint32_t relocSectIdx,
+                                     llvm::function_ref<void(uint32_t)> func);
+  void createDynDbgGCInfo();
 
   // SHT_LLVM_CALL_GRAPH_PROFILE section index.
   uint32_t cgProfileSectionIndex = 0;

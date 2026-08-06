@@ -1925,8 +1925,9 @@ template <class ELFT> void Writer<ELFT>::finalizeSections() {
       bool ignoreUnresolved =
           (ctx.arg.unresolvedSymbols == UnresolvedPolicy::Ignore);
       bool warnOnly = (ctx.arg.unresolvedSymbols == UnresolvedPolicy::Warn);
+      bool gcSections = ctx.arg.gcSections;
       for (Symbol *sym : ctx.symtab->getSymbols()) {
-        if (!sym->isDynDbgRef)
+        if (!sym->isDynDbgRef || (gcSections && !sym->hasFlag(USED)))
           continue;
 
         if (sym->isUndefined()) {
@@ -1936,8 +1937,9 @@ template <class ELFT> void Writer<ELFT>::finalizeSections() {
           static InputSection dummy(ctx.internalFile, dynDbgSecName, 0, 0, 0, 0,
                                     ArrayRef<uint8_t>());
           ObjFile<ELFT> *dbgObj = dyn_cast<ObjFile<ELFT>>(sym->file);
-          InputSectionBase *isec =
-              dbgObj && dbgObj->dynDbgSec ? dbgObj->dynDbgSec.get() : &dummy;
+          InputSectionBase *isec = dbgObj && dbgObj->dynDbgInfo
+                                       ? dbgObj->dynDbgInfo->inputSec.get()
+                                       : &dummy;
           ctx.undefErrs.push_back(
               {cast<Undefined>(sym), {{isec, 0}}, warnOnly});
           continue;
