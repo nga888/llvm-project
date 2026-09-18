@@ -363,20 +363,11 @@ template <class ELFT, bool TrackWhyLive>
 void MarkLive<ELFT, TrackWhyLive>::run() {
   // Add GC root symbols.
 
-  for (Symbol *sym : ctx.symtab->getSymbols()) {
-    // For now, preserve all symbols required by the embedded unoptimized part
-    // of dynamic debugging. TODO: better support for `--gc-sections`.
-    if (sym->isDynDbgRef) {
-      markSymbol(sym, "dynamic debugging");
-      sym->setFlags(USED);
-      continue;
-    }
-
-    // Preserve externally-visible symbols if the symbols defined by this
-    // file can interpose other ELF file's symbols at runtime.
+  // Preserve externally-visible symbols if the symbols defined by this
+  // file can interpose other ELF file's symbols at runtime.
+  for (Symbol *sym : ctx.symtab->getSymbols())
     if (sym->isExported)
       markSymbol(sym, "externally visible symbol");
-  }
 
   markSymbol(ctx.symtab->find(ctx.arg.entry), "entry point");
   markSymbol(ctx.symtab->find(ctx.arg.init), "initializer function");
@@ -390,6 +381,10 @@ void MarkLive<ELFT, TrackWhyLive>::run() {
     markSymbol(ctx.symtab->cmseSymMap[symName].acleSeSym, "ARM CMSE symbol");
   }
 
+  if (ctx.inDynDbgLink)
+    for (const StringRef &s : ctx.dynDbgGCRoots)
+      markSymbol(ctx.symtab->find(s), "dynamic debugging");
+
   // Mark .eh_frame sections as live because there are usually no relocations
   // that point to .eh_frames. Otherwise, the garbage collector would drop
   // all of them. We also want to preserve personality routines and LSDA
@@ -399,7 +394,8 @@ void MarkLive<ELFT, TrackWhyLive>::run() {
   // See markUsedSymbols.
   bool markUsed =
       ctx.arg.copyRelocs &&
-      (ctx.arg.discard != DiscardPolicy::None || ctx.arg.retainSymbols);
+      (ctx.arg.discard != DiscardPolicy::None || ctx.arg.retainSymbols) &&
+      !ctx.dynDbgRelocatable;
   for (InputSectionBase *sec : ctx.inputSections) {
     if (sec->flags & SHF_GNU_RETAIN) {
       enqueue(sec, /*offset=*/0, /*sym=*/nullptr, {std::nullopt, "retained"});
@@ -482,6 +478,9 @@ void MarkLive<ELFT, TrackWhyLive>::run() {
 
 template <class ELFT, bool TrackWhyLive>
 void MarkLive<ELFT, TrackWhyLive>::mark() {
+  if (ctx.hasDynDbg)
+    ctx.dynDbgGCMutexPool = std::vector<std::mutex>(ctx.arg.threadCount);
+
   if constexpr (!TrackWhyLive) {
     markParallel();
     return;
@@ -496,6 +495,25 @@ void MarkLive<ELFT, TrackWhyLive>::mark() {
       resolveReloc(sec, rel, false);
     for (const typename ELFT::Crel &rel : rels.crels)
       resolveReloc(sec, rel, false);
+
+    if (ctx.hasDynDbg) {
+      if (InputSection *is = dyn_cast<InputSection>(&sec)) {
+        if (const DynDbgGCInfo *gi = is->getDynDbgGCInfo()) {
+          ctx.dynDbgGCRoots.insert(ctx.dynDbgGCRoots.end(), gi->roots.begin(),
+                                   gi->roots.end());
+          for (Symbol *sym : gi->refs) {
+            sym->setFlags(USED);
+            if (auto *ss = dyn_cast<SharedSymbol>(sym)) {
+              if (!ss->isWeak())
+                whyLive.try_emplace(sym, LiveReason{is, "dynamic debugging"});
+            } else if (auto *d = dyn_cast<Defined>(sym)) {
+              if (auto *isec = dyn_cast_or_null<InputSectionBase>(d->section))
+                enqueue(isec, d->value, sym, {is, "dynamic debugging"});
+            }
+          }
+        }
+      }
+    }
 
     for (InputSectionBase *isec : sec.dependentSections)
       enqueue(isec, /*offset=*/0, /*sym=*/nullptr,
@@ -556,6 +574,25 @@ static void processSectionEdges(
     fn(isec, 0);
   if (sec.nextInSectionGroup)
     fn(sec.nextInSectionGroup, 0);
+
+  if (ctx.hasDynDbg) {
+    if (InputSection *is = dyn_cast<InputSection>(&sec)) {
+      if (const DynDbgGCInfo *gi = is->getDynDbgGCInfo()) {
+        {
+          std::lock_guard<std::mutex> lock(ctx.dynDbgGCRootsMutex);
+          ctx.dynDbgGCRoots.insert(ctx.dynDbgGCRoots.end(), gi->roots.begin(),
+                                   gi->roots.end());
+        }
+        for (Symbol *sym : gi->refs) {
+          if (!sym->hasFlag(USED))
+            sym->setFlags(USED);
+          if (auto *d = dyn_cast<Defined>(sym))
+            if (auto *isec = dyn_cast_or_null<InputSectionBase>(d->section))
+              fn(isec, 0);
+        }
+      }
+    }
+  }
 }
 
 // Parallel mark using level-synchronized BFS with depth-limited inline
