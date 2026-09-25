@@ -3257,9 +3257,10 @@ template <class ELFT> static void linkDynamicDebug(Ctx &ctx) {
 
   for (auto *file : ctx.objectFiles) {
     auto *obj = cast<ObjFile<ELFT>>(file);
-    if (obj->dynDbgSec) {
-      MemoryBufferRef mb(toStringRef(obj->dynDbgSec->contentMaybeDecompress()),
-                         obj->mb.getBufferIdentifier());
+    if (obj->dynDbgInfo) {
+      MemoryBufferRef mb(
+          toStringRef(obj->dynDbgInfo->inputSec->contentMaybeDecompress()),
+          obj->mb.getBufferIdentifier());
       dctx.driver.addFile(createObjFile(dctx, mb));
     }
   }
@@ -3272,6 +3273,10 @@ template <class ELFT> static void linkDynamicDebug(Ctx &ctx) {
       dctx.saver.save(Twine("-O") + Twine(ctx.arg.optimize)).data()};
   if (ctx.arg.resolveGroups)
     args.push_back("--force-group-allocation");
+  if (ctx.arg.gcSections) {
+    dctx.dynDbgGCRoots = std::move(ctx.dynDbgGCRoots);
+    args.push_back("--gc-sections");
+  }
   dctx.driver.linkerMain(args);
   if (errCount(dctx) > 0 || !dctx.dynDbgOutput) {
     Err(ctx) << "failed to create relocatable dynamic debug object";
