@@ -32,6 +32,12 @@ class SyntheticSection;
 template <class ELFT> class ObjFile;
 class OutputSection;
 
+// Dynamic debugging info to support --gc-sections.
+struct DynDbgGCInfo {
+  SmallVector<StringRef, 1> roots;
+  SmallVector<Symbol *, 0> refs;
+};
+
 // Returned by InputSectionBase::relsOrRelas. At least two members are empty.
 template <class ELFT> struct RelsOrRelas {
   Relocs<typename ELFT::Rel> rels;
@@ -461,6 +467,9 @@ public:
   // Called by ICF to merge two input sections.
   void replace(InputSection *other);
 
+  DynDbgGCInfo *dynDbgGCInfo = nullptr;
+  const DynDbgGCInfo *getDynDbgGCInfo() const;
+
   static InputSection discarded;
 
 private:
@@ -493,7 +502,7 @@ public:
 };
 
 #ifndef _WIN32
-static_assert(sizeof(InputSection) <= 152, "InputSection is too big");
+static_assert(sizeof(InputSection) <= 160, "InputSection is too big");
 #endif
 
 class SyntheticSection : public InputSection {
